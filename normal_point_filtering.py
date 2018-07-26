@@ -83,18 +83,21 @@ def rescale_to_gsd(img_array, img_affine, new_gsd=5):
             (new_gsd / img_gsd)
             )
     new_shape = new_shape.astype(np.int)
-#    print(img_array.shape, new_gsd, img_gsd, new_shape)
+    
     new_img_array = resize(
             img_array,
             new_shape,
             preserve_range=True,
             clip=True,
             )
-    x_rs, y_rs = np.array(img_array.shape) / new_img_array.shape
+    x_rs, y_rs = np.array(img_array.shape, dtype=np.float) / new_img_array.shape
     new_affine = list(img_affine[0:6])
     new_affine[0] = new_affine[0] * x_rs
     new_affine[4] = new_affine[4] * y_rs
     new_affine = affine.Affine(*new_affine)
+    
+    print(img_array.shape,  new_img_array.shape, x_rs, y_rs)
+    
     return new_img_array, new_affine
 
 
@@ -115,6 +118,13 @@ def bound_to_utm(bnds):
         assert letter in 'NPQRSTUVWXX'
         new_crs = 32600 + zone
     return new_crs
+
+
+def bound_from_affine(array, afn):
+    left, top = (0,0)*afn
+    right, bottom = (array.shape[1], array.shape[0])*afn
+    bb = namedtuple('BoundingBox','left right top bottom'.split())
+    return bb(left=left, bottom=bottom, right=right, top=top)
 
 
 def convert_img_to_utm(src_array, src, dst_crs, src_bounds, i=1):
@@ -199,12 +209,47 @@ def smooth_poly(g, s=10, b=3):
     # b: minimum offset from original (un-smoothed) zone border
     if len(g)==0:
         return g
-    g = g.geometry.buffer(s)
-    g = g.geometry.buffer(-2*s)
-    g = g.geometry.buffer(s-b)
+    g = g.buffer(s)
+    g = g.buffer(-2*s)
+    g = g.buffer(s-b)
     g = g[g.area > 0]
     return g
     
+
+
+
+
+
+
+def clean_poly_list(geoms):
+    
+    def convert_3d_to_2d(poly):
+        if poly.has_z:
+            coords = [(x,y) for (x,y,z) in list(poly.boundary.coords)]
+            return Polygon(coords)
+        else:
+            return poly
+
+    def process_poly(poly):
+        if poly.geom_type == 'MultiPolygon':
+            out = list()
+            for p in poly:
+                out.extend(process_poly(p))
+            return out
+        elif poly.geom_type == 'Polygon':
+            poly = convert_3d_to_2d(poly)
+            return [poly,]
+        else:
+            raise ValueError('kml file must have Polygon / MultiPolygon features only')
+
+    
+    out=[]
+    for poly in geoms:
+        out.extend(process_poly(poly))
+    return out
+
+
+
 
 #NOTES
 #input "profile" wll be standard to mask images, as from same image source
@@ -246,37 +291,68 @@ if __name__ is '__main__':
         mask_img_utm_res, affine_res = rescale_to_gsd(mask_img_utm, new_profile['affine'], new_gsd=5)
         mask_img_utm_res = mask_img_utm_res.astype(np.uint8)
         
-        #TODO: delete next line, used only for reference
-        tif_img_utm_res, _affine_res = rescale_to_gsd(tif_img_utm, new_profile['affine'], new_gsd=5) 
+#        #TODO: delete next line, used only for reference
+#        tif_img_utm_res, _affine_res = rescale_to_gsd(tif_img_utm, new_profile['affine'], new_gsd=1) 
         
         #turn mask into polygons, then smooth
         gdf = polgonise(mask_img_utm_res)
-        gdf_smooth = smooth_poly(gdf, s=10, b=3)
+#        gdf =gdf.simplify(1)
+        gdf = cascaded_union(gdf.geometry)
+#        gdf_smooth = smooth_poly(gdf, s=10, b=3)
+        gdf_smooth = gdf.buffer(-6).buffer(12).buffer(-8)
 #        gdf_smooth = gpd.GeoDataFrame({'geometry':gdf_smooth, 'raster_val':255})
 
         a = gdf.plot()
         plt.imshow(tif_img_utm_res)
         
         if len(gdf_smooth)>0:
-#            a=gdf_smooth.plot()
+            a=gdf_smooth.plot()
             plt.imshow(mask_img_utm_res)
             
-            for p in gdf_smooth:
+            m = clean_poly_list(gdf_smooth)
+            for p in m:
                 x,y = p.exterior.xy
                 plt.plot(x,y)
             
             
-            poly_list = list((p,1) for p in gdf_smooth)
+            poly_list = list((p,1) for p in m)
             burned = features.rasterize(
                     shapes=poly_list,
                     out_shape=mask_img_utm_res.shape)
+
+#----------------------------------------------------------------------------- 
             
-            burned = resize(
-                burned,
-                mask_img_utm.shape,
-                preserve_range=True,
-                clip=True,
-                )
+            #WITH pre-RESCALE:
+            
+#            burned = resize(
+#                burned,
+#                mask_img_utm.shape,
+#                preserve_range=True,
+#                clip=True,
+#                )
+#            
+#            # Reproject and write band i
+#            dst_array = np.empty((src_profile['height'], src_profile['width']), dtype='uint8')
+#            reproject(
+#                # Source parameters
+#                source=burned,
+#                src_crs=crs.CRS.from_epsg(epsg_n),
+#                src_transform=new_profile['affine'],
+#                # Destination paramaters
+#                destination=dst_array,
+#                dst_transform=src_profile['affine'],
+#                dst_crs=crs.CRS.from_epsg(4326),
+#                # Configuration
+#                resampling=Resampling.nearest,
+#                )
+#            
+#            out_profile = src_profile.copy()
+#            outFile = zone_mask.replace('.tif','-test.tif')
+#            with rasterio.open(outFile, "w", **out_profile) as dest:
+#                dest.write(dst_array,1)
+#-----------------------------------------------------------------------------
+    
+            
             
             # Reproject and write band i
             dst_array = np.empty((src_profile['height'], src_profile['width']), dtype='uint8')
@@ -284,28 +360,22 @@ if __name__ is '__main__':
                 # Source parameters
                 source=burned,
                 src_crs=crs.CRS.from_epsg(epsg_n),
-                src_transform=new_profile['affine'],
+                src_transform=affine_res,
                 # Destination paramaters
                 destination=dst_array,
                 dst_transform=src_profile['affine'],
                 dst_crs=crs.CRS.from_epsg(4326),
                 # Configuration
-                resampling=Resampling.nearest,
+#                resampling=Resampling.nearest,
                 )
             
-            out_profile = src_profile.copy()
+            
+            
             outFile = zone_mask.replace('.tif','-test.tif')
-            with rasterio.open(outFile, "w", **out_profile) as dest:
-                dest.write(dst_array,1)
-        
-#        def bound_from_affine(array, afn):
-#            left, bottom = (0,0)*afn
-#            right, top = array.shape*afn
-#            bb = namedtuple('BoundingBox','left right top bottom'.split())
-#            return bb(left=left, bottom=bottom, right=right, top=top)
-#        out_crs = crs.CRS.from_epsg(4326)
-#        out_bounds = bound_from_affine(burned, new_profile['affine'])
-#        maks_out, profile_out = convert_img_to_utm(burned, new_profile, out_crs, out_bounds)
+            src_profile.update({'transform':src_profile['affine']})
+            with rasterio.open(outFile, "w", **src_profile) as dest:
+                dest.write(dst_array,1)      
+    
         
 
 #        out=[]
