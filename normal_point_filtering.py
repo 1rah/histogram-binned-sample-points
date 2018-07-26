@@ -117,7 +117,10 @@ def bound_to_utm(bnds):
     else:
         assert letter in 'NPQRSTUVWXX'
         new_crs = 32600 + zone
-    return new_crs
+    
+    invert = lambda e,n: utm.to_latlon(e,n,zone,letter)
+    
+    return new_crs, invert
 
 
 def bound_from_affine(array, afn):
@@ -272,7 +275,7 @@ if __name__ is '__main__':
             mask_img = src.read(1)
             src_profile = src.profile.copy()
 #            src_profile.update({'bounds':src.bounds})
-            epsg_n = bound_to_utm(src.bounds)
+            epsg_n, invert = bound_to_utm(src.bounds)
             dst_crs = crs.CRS.from_epsg(epsg_n)
             mask_img_utm, new_profile = convert_img_to_utm(mask_img, src_profile, dst_crs, src.bounds)
             tif_img_utm, _p = convert_img_to_utm(tif_img, src_profile, dst_crs, src.bounds)
@@ -296,17 +299,16 @@ if __name__ is '__main__':
         
         #turn mask into polygons, then smooth
         gdf = polgonise(mask_img_utm_res)
-#        gdf =gdf.simplify(1)
+        gdf =gdf.simplify(1)
         gdf = cascaded_union(gdf.geometry)
 #        gdf_smooth = smooth_poly(gdf, s=10, b=3)
-        gdf_smooth = gdf.buffer(-6).buffer(12).buffer(-8)
+        gdf_smooth = gdf.buffer(-6).buffer(18).buffer(-15)
 #        gdf_smooth = gpd.GeoDataFrame({'geometry':gdf_smooth, 'raster_val':255})
 
-        a = gdf.plot()
-        plt.imshow(tif_img_utm_res)
+#        plt.imshow(tif_img_utm_res)
         
-        if len(gdf_smooth)>0:
-            a=gdf_smooth.plot()
+        if not gdf_smooth.is_empty:
+#            a=gdf_smooth.plot()
             plt.imshow(mask_img_utm_res)
             
             m = clean_poly_list(gdf_smooth)
@@ -376,15 +378,16 @@ if __name__ is '__main__':
             with rasterio.open(outFile, "w", **src_profile) as dest:
                 dest.write(dst_array,1)      
     
-        
-
-#        out=[]
-#        for lr in gdf_smooth.exterior:
-#            pts = [(px,py)*~affine_res for px,py in lr.coords]
-#            out.append(Polygon(pts))
-#        out = gpd.GeoDataFrame({'geometry':out})  
-#        with open('D:\\test-inputs\\oleksi-issues-normal-points\\test.json', 'w') as dst:
-#            dst.write(out.to_json())
+            coords = [p.exterior.coords for p in gdf_smooth]
+            out=[]
+            for c in coords:
+                pts = [(px,py)*affine_res for px,py in c]
+                pts = [invert(e,n) for e,n in pts]
+                pts = [(py,px) for px,py in pts]
+                out.append(Polygon(pts))
+            out = gpd.GeoDataFrame({'geometry':out})  
+            with open('D:\\test-inputs\\oleksi-issues-normal-points\\test.json', 'w') as dst:
+                dst.write(out.to_json())
 
 
         #TODO: get biggest polygon
