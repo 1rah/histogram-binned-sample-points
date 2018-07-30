@@ -264,20 +264,18 @@ if __name__ is '__main__':
     tif_file = 'D:\\test-inputs\\oleksi-issues-normal-points\\src.tif'
     
     with rasterio.open(tif_file) as src:
-        tif_img = src.read(1)
+#        tif_img = src.read(1)
         src_profile = src.profile.copy()
         epsg_n, invert = bound_to_utm(src.bounds)
     
     for zone_mask in zone_masks:
-
+            #process a zone mask, get smoothed json and arry
             gdf_smooth, dst_array, affine_res, poly_out = main_process(zone_mask, src_profile, epsg_n)
-            
             # Write outputs image to disk            
             outFile = zone_mask.replace('.tif','_flt.tif')
             src_profile.update({'transform':src_profile['affine']})
             with rasterio.open(outFile, "w", **src_profile) as dest:
                 dest.write(dst_array,1)      
-    
             # Write outputs json to disk
             outFile = zone_mask.replace('.tif','_flt.json')            
             with open(outFile, 'w') as dst:
