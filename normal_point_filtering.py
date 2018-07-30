@@ -19,6 +19,7 @@ import utm
 from rasterio import crs
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from rasterio import features
+import argparse
 
 # ----------------------------------------------------------------------------
 # Smooth Mask to Polygon
@@ -254,51 +255,74 @@ def max_bin_filter(tif_img, mask_img, bins=3):
 # Main: Run from Command Line
 # ----------------------------------------------------------------------------
 if __name__ is '__main__':
-     
-    zone_masks = [
-     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z00.tif',
-     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z01.tif',
-     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z02.tif',
-     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z03.tif',
-     ]
     
-    tif_file = 'D:\\test-inputs\\oleksi-issues-normal-points\\src.tif'
+    parser = argparse.ArgumentParser()
+    parser.add_argument('index_file', help="path to index image, single channel 8bit tif")
+    parser.add_argument('zone_mask_files', nargs="+",
+                         help="list of tif files as 8bit binary arrays, one per zone")
+    parser.add_argument('-max_binning_prefilter', action='store_true',
+                        help="perform max binning prefiltering on masks before smoothing")
+    parser.add_argument('-set_bin_count', type=int,
+                       help="set the number of bins in 'Max Binning Filter'")
     
-    max_binning_prefilter = True
-    histogram_bins = 3
+    args = parser.parse_args(r"""
+     D:\test-inputs\oleksi-issues-normal-points\src.tif
+     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z00.tif
+     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z01.tif
+     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z02.tif
+     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z03.tif
+     -max_binning_prefilter -set_bin_count 3
+     """.split()
+     )
+    print(args)
     
-    #open the index image file and extract data
-    with rasterio.open(tif_file) as src:
-        src_profile = src.profile.copy()
-        epsg_n, invert = bound_to_utm(src.bounds)
-        utm_crs = crs.CRS.from_epsg(epsg_n)
-        tif_img = src.read(1)
-        tif_img_utm, _p = convert_img_to_utm(tif_img, src_profile, utm_crs, src.bounds)
-    
-    for zone_mask in zone_masks:
-        
-            #open the mask image file and extract data
-            with rasterio.open(zone_mask) as src:
-                mask_img = src.read(1)
-                mask_img_profile = src.profile.copy()
-                mask_img_bounds = src.bounds
+#    zone_masks = [
+#     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z00.tif',
+#     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z01.tif',
+#     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z02.tif',
+#     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z03.tif',
+#     ]
+#    
+#    tif_file = 'D:\\test-inputs\\oleksi-issues-normal-points\\src.tif'
+#    
+#    max_binning_prefilter = True
+#    histogram_bins = 3
 
-            if max_binning_prefilter:
-                #prefilter mask - max binning
-                mask_img = max_bin_filter(tif_img, mask_img, bins=histogram_bins)
-        
-            # smooth mask image and create json and array
-            dst_array, affine_res, poly_out = smooth_mask(mask_img, mask_img_profile, mask_img_bounds)
-            
-            # Write outputs image to disk            
-            outFile = zone_mask.replace('.tif','_smooth.tif')
-            src_profile.update({'transform':src_profile['affine']})
-            with rasterio.open(outFile, "w", **src_profile) as dest:
-                dest.write(dst_array,1)      
-            # Write outputs json to disk
-            outFile = zone_mask.replace('.tif','_smooth.json')            
-            with open(outFile, 'w') as dst:
-                dst.write(poly_out.to_json())
+
+
+    
+#    #open the index image file and extract data
+#    with rasterio.open(tif_file) as src:
+#        src_profile = src.profile.copy()
+#        epsg_n, invert = bound_to_utm(src.bounds)
+#        utm_crs = crs.CRS.from_epsg(epsg_n)
+#        tif_img = src.read(1)
+#        tif_img_utm, _p = convert_img_to_utm(tif_img, src_profile, utm_crs, src.bounds)
+#    
+#    for zone_mask in zone_masks:
+#        
+#            #open the mask image file and extract data
+#            with rasterio.open(zone_mask) as src:
+#                mask_img = src.read(1)
+#                mask_img_profile = src.profile.copy()
+#                mask_img_bounds = src.bounds
+#
+#            if max_binning_prefilter:
+#                #prefilter mask - max binning
+#                mask_img = max_bin_filter(tif_img, mask_img, bins=histogram_bins)
+#        
+#            # smooth mask image and create json and array
+#            dst_array, affine_res, poly_out = smooth_mask(mask_img, mask_img_profile, mask_img_bounds)
+#            
+#            # Write outputs image to disk            
+#            outFile = zone_mask.replace('.tif','_smooth.tif')
+#            src_profile.update({'transform':src_profile['affine']})
+#            with rasterio.open(outFile, "w", **src_profile) as dest:
+#                dest.write(dst_array,1)      
+#            # Write outputs json to disk
+#            outFile = zone_mask.replace('.tif','_smooth.json')            
+#            with open(outFile, 'w') as dst:
+#                dst.write(poly_out.to_json())
 
 
     
