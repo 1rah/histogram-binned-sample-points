@@ -1,20 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Jul 23 16:40:12 2018
+Created on Mon Jul 30
 
-@author: FluroSat
+@author: Irah Wajchman
 """
 import rasterio
 from rasterio.features import shapes
 from shapely.geometry import shape, Polygon
 from shapely.ops import cascaded_union
 from shapely.geometry.multipolygon import MultiPolygon
-
 from collections import namedtuple
-
 import matplotlib.pyplot as plt
 import numpy as np
-from skimage.morphology import binary_erosion, binary_dilation
 from skimage.transform import resize
 import geopandas as gpd
 import affine
@@ -23,6 +20,9 @@ from rasterio import crs
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from rasterio import features
 
+# ----------------------------------------------------------------------------
+# Smooth Mask to Polygon
+# ----------------------------------------------------------------------------
 
 def rescale_to_gsd(img_array, img_affine, new_gsd=5):
     img_gsd = abs(np.array((img_affine.a, img_affine.e)))
@@ -48,7 +48,6 @@ def rescale_to_gsd(img_array, img_affine, new_gsd=5):
 #    print(img_array.shape,  new_img_array.shape, x_rs, y_rs)
     return new_img_array, new_affine
 
-
 def bound_to_utm(bnds):
     lng1, lat1, lng2, lat2 = bnds
     
@@ -70,13 +69,11 @@ def bound_to_utm(bnds):
     
     return new_crs, invert
 
-
 def bound_from_affine(array, afn):
     left, top = (0,0)*afn
     right, bottom = (array.shape[1], array.shape[0])*afn
     bb = namedtuple('BoundingBox','left right top bottom'.split())
     return bb(left=left, bottom=bottom, right=right, top=top)
-
 
 def convert_img_to_utm(src_array, src, dst_crs, src_bounds, i=1):
     src=src.copy()
@@ -114,34 +111,6 @@ def convert_img_to_utm(src_array, src, dst_crs, src_bounds, i=1):
     
     return dst_array, profile
 
-def get_min_max(array_img, array_mask, bins=4):
-    #Get histogram thresholds
-    masked = np.where(array_mask.astype(bool), array_img, np.nan)
-    masked_flat = masked.flatten()
-    masked_flat = masked_flat[~np.isnan(masked_flat)]
-    
-    cnt, val = np.histogram(masked_flat, bins=bins)
-    imax = cnt.argmax()
-    min_max = val[imax: imax+2]
-    return min_max
-
-def filter_to_min_max(tif_img, img_mask, min_max):
-    if len(min_max)==2:
-        l,u = min_max
-        f = np.where(
-                (tif_img>=l) & (tif_img<u) & (img_mask.astype(bool)),
-                tif_img,
-                np.nan)
-    else:
-        assert len(min_max)==1
-        l = min_max[0]
-        f = np.where(
-                (tif_img>=l) & (img_mask.astype(bool)),
-                tif_img,
-                np.nan)
-    return f
-
-
 def polgonise(img_mask):
     shp = shapes(img_mask, mask=img_mask.astype(bool), connectivity=4)
     results = (
@@ -153,7 +122,6 @@ def polgonise(img_mask):
     g = gpd.GeoDataFrame.from_features(geoms)
     g = g[g.area>0] #filter out empty shapes
     return g
-
 
 def clean_poly_list(geoms):
     
@@ -182,76 +150,109 @@ def clean_poly_list(geoms):
         out.extend(process_poly(poly))
     return out
 
-
 def plot_polys(m):
     for p in m:
         x,y = p.exterior.xy
         plt.plot(x,y)
 
+def smooth_mask(mask_img, mask_img_profile, mask_img_bounds):
+    
+    #convert input image to UTM
+    epsg_n, invert = bound_to_utm(mask_img_bounds)
+    utm_crs = crs.CRS.from_epsg(epsg_n)
+    mask_img_utm, new_profile = convert_img_to_utm(mask_img, mask_img_profile, utm_crs, src.bounds)
 
-def main_process(zone_mask, src_profile, epsg_n):
+    #rescale mask to 5m reolution image
+    mask_img_utm_res, affine_res = rescale_to_gsd(mask_img_utm, new_profile['affine'], new_gsd=5)
+    mask_img_utm_res = mask_img_utm_res.astype(np.uint8)
+           
+    #turn mask into polygons, then smooth
+    gdf = polgonise(mask_img_utm_res).simplify(1)
+    gdf = cascaded_union(gdf.geometry)
+    gdf_smooth = gdf.buffer(-6).buffer(18).buffer(-15)
+
+    # if polygons remain, create raster image        
+    if not gdf_smooth.is_empty:
         
-        #open the file and extrace data, convert to UTM
-        with rasterio.open(zone_mask) as src:
-            mask_img = src.read(1)
-            dst_crs = crs.CRS.from_epsg(epsg_n)
-            mask_img_utm, new_profile = convert_img_to_utm(mask_img, src_profile, dst_crs, src.bounds)
-            tif_img_utm, _p = convert_img_to_utm(tif_img, src_profile, dst_crs, src.bounds)
+        #create poly
+        m = clean_poly_list(gdf_smooth)
+        poly_list = list((p,1) for p in m)
+        burned = features.rasterize(shapes=poly_list, out_shape=mask_img_utm_res.shape)
 
-        #do max bin filtering
-        min_max = get_min_max(tif_img, mask_img, bins=4)
-        f = filter_to_min_max(tif_img_utm, mask_img_utm, min_max)
-        mask_img_utm = np.where(np.isnan(f),0,255)
+        # Reproject back to WGS84
+        dst_array = np.empty((src_profile['height'], src_profile['width']), dtype='uint8')
+        reproject(
+            # Source parameters
+            source=burned,
+            src_crs=crs.CRS.from_epsg(epsg_n),
+            src_transform=affine_res,
+            # Destination paramaters
+            destination=dst_array,
+            dst_transform=src_profile['affine'],
+            dst_crs=mask_img_profile['crs'], #convert back to input CRS
+            )
         
-        #rescale mask to 5m reolution image
-        mask_img_utm_res, affine_res = rescale_to_gsd(mask_img_utm, new_profile['affine'], new_gsd=5)
-        mask_img_utm_res = mask_img_utm_res.astype(np.uint8)
-               
-        #turn mask into polygons, then smooth
-        gdf = polgonise(mask_img_utm_res)
-        gdf =gdf.simplify(1)
-        gdf = cascaded_union(gdf.geometry)
-        gdf_smooth = gdf.buffer(-6).buffer(18).buffer(-15)
+        #convert polygon coordinates, convert to dataframe
+        coords = [p.exterior.coords for p in gdf_smooth]
+        poly_out=[]
+        for c in coords:
+            pts = [(px,py)*affine_res for px,py in c]
+            pts = [invert(e,n) for e,n in pts]
+            pts = [(py,px) for px,py in pts]
+            poly_out.append(Polygon(pts))
+        poly_out = gpd.GeoDataFrame({'geometry':poly_out})  
+        
+    # if all poly zones are too small, returned array and json will be empty
+    else:
+        dst_array = np.zeros((src_profile['height'], src_profile['width']), dtype='uint8')
+        poly_out = gpd.GeoDataFrame({'geometry':[]})
+    
+    return dst_array, affine_res, poly_out
 
-        # if polygons remain, create raster image        
-        if not gdf_smooth.is_empty:
-            
-            #create poly
-            m = clean_poly_list(gdf_smooth)
-            poly_list = list((p,1) for p in m)
-            burned = features.rasterize(shapes=poly_list, out_shape=mask_img_utm_res.shape)
 
-            # Reproject back to WGS84
-            dst_array = np.empty((src_profile['height'], src_profile['width']), dtype='uint8')
-            reproject(
-                # Source parameters
-                source=burned,
-                src_crs=crs.CRS.from_epsg(epsg_n),
-                src_transform=affine_res,
-                # Destination paramaters
-                destination=dst_array,
-                dst_transform=src_profile['affine'],
-                dst_crs=crs.CRS.from_epsg(4326),
+# ----------------------------------------------------------------------------
+# Max Bin Filtering (pre-filter)
+# ----------------------------------------------------------------------------
+
+def get_min_max(array_img, array_mask, bins=4):
+    #Get histogram thresholds
+    masked = np.where(array_mask.astype(bool), array_img, np.nan)
+    masked_flat = masked.flatten()
+    masked_flat = masked_flat[~np.isnan(masked_flat)]
+    cnt, val = np.histogram(masked_flat, bins=bins)
+    imax = cnt.argmax()
+    min_max = val[imax: imax+2] #upper and lower threshold values
+    return min_max
+
+def filter_to_min_max(tif_img, img_mask, min_max):
+    #if lower and upper bound given
+    if len(min_max)==2:
+        l,u = min_max
+        f = np.where(
+                (tif_img>=l) & (tif_img<u) & (img_mask.astype(bool)),
+                tif_img,
+                np.nan,
                 )
-            
-            #convert polygon coordinates, convert to dataframe
-            coords = [p.exterior.coords for p in gdf_smooth]
-            poly_out=[]
-            for c in coords:
-                pts = [(px,py)*affine_res for px,py in c]
-                pts = [invert(e,n) for e,n in pts]
-                pts = [(py,px) for px,py in pts]
-                poly_out.append(Polygon(pts))
-            poly_out = gpd.GeoDataFrame({'geometry':poly_out})  
-            
-        # if all poly zones are too small, returned array and json will be empty
-        else:
-            dst_array = np.zeros((src_profile['height'], src_profile['width']), dtype='uint8')
-            poly_out = gpd.GeoDataFrame({'geometry':[]})
-        
-        return gdf_smooth, dst_array, affine_res, poly_out
+    else:
+    #else just upper bound
+        assert len(min_max)==1
+        l = min_max[0]
+        f = np.where(
+                (tif_img>=l) & (img_mask.astype(bool)),
+                tif_img,
+                np.nan,
+                )
+    return f
 
-# run script from command line
+def max_bin_filter(tif_img, mask_img, bins=3):
+    #do max bin filtering - Remove pixels which do no occur in the max bin
+    min_max = get_min_max(tif_img, mask_img, bins=bins)
+    f = filter_to_min_max(tif_img, mask_img, min_max)
+    return np.where(np.isnan(f),0,255)
+
+# ----------------------------------------------------------------------------
+# Main: Run from Command Line
+# ----------------------------------------------------------------------------
 if __name__ is '__main__':
      
     zone_masks = [
@@ -263,21 +264,39 @@ if __name__ is '__main__':
     
     tif_file = 'D:\\test-inputs\\oleksi-issues-normal-points\\src.tif'
     
+    max_binning_prefilter = True
+    histogram_bins = 3
+    
+    #open the index image file and extract data
     with rasterio.open(tif_file) as src:
-#        tif_img = src.read(1)
         src_profile = src.profile.copy()
         epsg_n, invert = bound_to_utm(src.bounds)
+        utm_crs = crs.CRS.from_epsg(epsg_n)
+        tif_img = src.read(1)
+        tif_img_utm, _p = convert_img_to_utm(tif_img, src_profile, utm_crs, src.bounds)
     
     for zone_mask in zone_masks:
-            #process a zone mask, get smoothed json and arry
-            gdf_smooth, dst_array, affine_res, poly_out = main_process(zone_mask, src_profile, epsg_n)
+        
+            #open the mask image file and extract data
+            with rasterio.open(zone_mask) as src:
+                mask_img = src.read(1)
+                mask_img_profile = src.profile.copy()
+                mask_img_bounds = src.bounds
+
+            if max_binning_prefilter:
+                #prefilter mask - max binning
+                mask_img = max_bin_filter(tif_img, mask_img, bins=histogram_bins)
+        
+            # smooth mask image and create json and array
+            dst_array, affine_res, poly_out = smooth_mask(mask_img, mask_img_profile, mask_img_bounds)
+            
             # Write outputs image to disk            
-            outFile = zone_mask.replace('.tif','_flt.tif')
+            outFile = zone_mask.replace('.tif','_smooth.tif')
             src_profile.update({'transform':src_profile['affine']})
             with rasterio.open(outFile, "w", **src_profile) as dest:
                 dest.write(dst_array,1)      
             # Write outputs json to disk
-            outFile = zone_mask.replace('.tif','_flt.json')            
+            outFile = zone_mask.replace('.tif','_smooth.json')            
             with open(outFile, 'w') as dst:
                 dst.write(poly_out.to_json())
 
