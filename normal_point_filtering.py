@@ -189,7 +189,7 @@ def smooth_mask(mask_img, mask_img_profile, mask_img_bounds):
             src_transform=affine_res,
             # Destination paramaters
             destination=dst_array,
-            dst_transform=src_profile['affine'],
+            dst_transform=mask_img_profile['affine'],
             dst_crs=mask_img_profile['crs'], #convert back to input CRS
             )
         
@@ -266,6 +266,7 @@ def main(
         max_binning_prefilter = True,
         set_bin_count = 3,
         show_plots = False,
+        out_name_ext = r'_smooth',
         ):    
     #open the index image file and extract data
     with rasterio.open(index_file) as src:
@@ -299,13 +300,14 @@ def main(
                 plt.subplot(133)
                 plt.imshow(dst_array)
             
-            # Write outputs image to disk            
-            outFile = zone_mask.replace('.tif','_smooth.tif')
+            # Write outputs image to disk
+            ft = r'.'+zone_mask.split('.')[-1]
+            outFile = zone_mask.replace(ft, out_name_ext+ft)
             src_profile.update({'transform':src_profile['affine']})
             with rasterio.open(outFile, "w", **src_profile) as dest:
                 dest.write(dst_array,1)      
             # Write outputs json to disk
-            outFile = zone_mask.replace('.tif','_smooth.json')            
+            outFile = zone_mask.replace(ft, out_name_ext+r'.json')            
             with open(outFile, 'w') as dst:
                 dst.write(poly_out.to_json())
 
