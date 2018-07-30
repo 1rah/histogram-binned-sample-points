@@ -271,9 +271,7 @@ def main(
     with rasterio.open(index_file) as src:
         src_profile = src.profile.copy()
         epsg_n, invert = bound_to_utm(src.bounds)
-        utm_crs = crs.CRS.from_epsg(epsg_n)
         tif_img = src.read(1)
-        tif_img_utm, _p = convert_img_to_utm(tif_img, src_profile, utm_crs, src.bounds)
     
     for zone_mask in zone_mask_files:
         
@@ -328,17 +326,17 @@ if __name__ is '__main__':
     parser.add_argument('-show_plots', action='store_true',
                         help="show output plots")
     #for cmd line
-    args = parser.parse_args()
+#    args = parser.parse_args()
     
-#    #for debug
-#    args = parser.parse_args(r"""
-#     D:\test-inputs\oleksi-issues-normal-points\src.tif
-#     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z00.tif
-#     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z01.tif
-#     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z02.tif
-#     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z03.tif
-#     -max_binning_prefilter -set_bin_count 3 -show_plots
-#     """.split())
+    #for debug
+    args = parser.parse_args(r"""
+     D:\test-inputs\oleksi-issues-normal-points\src.tif
+     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z00.tif
+     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z01.tif
+     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z02.tif
+     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z03.tif
+     -max_binning_prefilter -set_bin_count 3 -show_plots
+     """.split())
     
     kwargs = vars(args)
     main(**kwargs)
