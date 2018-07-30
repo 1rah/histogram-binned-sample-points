@@ -161,7 +161,7 @@ def smooth_mask(mask_img, mask_img_profile, mask_img_bounds):
     #convert input image to UTM
     epsg_n, invert = bound_to_utm(mask_img_bounds)
     utm_crs = crs.CRS.from_epsg(epsg_n)
-    mask_img_utm, new_profile = convert_img_to_utm(mask_img, mask_img_profile, utm_crs, src.bounds)
+    mask_img_utm, new_profile = convert_img_to_utm(mask_img, mask_img_profile, utm_crs, mask_img_bounds)
 
     #rescale mask to 5m reolution image
     mask_img_utm_res, affine_res = rescale_to_gsd(mask_img_utm, new_profile['affine'], new_gsd=5)
@@ -181,7 +181,7 @@ def smooth_mask(mask_img, mask_img_profile, mask_img_bounds):
         burned = features.rasterize(shapes=poly_list, out_shape=mask_img_utm_res.shape)
 
         # Reproject back to WGS84
-        dst_array = np.empty((src_profile['height'], src_profile['width']), dtype='uint8')
+        dst_array = np.empty((mask_img_profile['height'], mask_img_profile['width']), dtype='uint8')
         reproject(
             # Source parameters
             source=burned,
@@ -205,7 +205,7 @@ def smooth_mask(mask_img, mask_img_profile, mask_img_bounds):
         
     # if all poly zones are too small, returned array and json will be empty
     else:
-        dst_array = np.zeros((src_profile['height'], src_profile['width']), dtype='uint8')
+        dst_array = np.zeros((mask_img_profile['height'], mask_img_profile['width']), dtype='uint8')
         poly_out = gpd.GeoDataFrame({'geometry':[]})
     
     return dst_array, affine_res, poly_out
@@ -327,7 +327,10 @@ if __name__ is '__main__':
                        help="set the number of bins in 'Max Binning Filter'")
     parser.add_argument('-show_plots', action='store_true',
                         help="show output plots")
+    #for cmd line
+#    args = parser.parse_args()
     
+    #for debug
     args = parser.parse_args(r"""
      D:\test-inputs\oleksi-issues-normal-points\src.tif
      D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z00.tif
@@ -336,6 +339,7 @@ if __name__ is '__main__':
      D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z03.tif
      -max_binning_prefilter -set_bin_count 3 -show_plots
      """.split())
+    
     kwargs = vars(args)
     main(**kwargs)
     
