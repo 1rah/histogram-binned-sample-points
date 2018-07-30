@@ -251,8 +251,69 @@ def max_bin_filter(tif_img, mask_img, bins=3):
     f = filter_to_min_max(tif_img, mask_img, min_max)
     return np.where(np.isnan(f),0,255)
 
+
 # ----------------------------------------------------------------------------
-# Main: Run from Command Line
+# Main Driver
+# ----------------------------------------------------------------------------
+def main(
+        zone_mask_files = [
+             'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z00.tif',
+             'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z01.tif',
+             'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z02.tif',
+             'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z03.tif',
+             ],
+        index_file = 'D:\\test-inputs\\oleksi-issues-normal-points\\src.tif',
+        max_binning_prefilter = True,
+        set_bin_count = 3,
+        show_plots = False,
+        ):    
+    #open the index image file and extract data
+    with rasterio.open(index_file) as src:
+        src_profile = src.profile.copy()
+        epsg_n, invert = bound_to_utm(src.bounds)
+        utm_crs = crs.CRS.from_epsg(epsg_n)
+        tif_img = src.read(1)
+        tif_img_utm, _p = convert_img_to_utm(tif_img, src_profile, utm_crs, src.bounds)
+    
+    for zone_mask in zone_mask_files:
+        
+            #open the mask image file and extract data
+            with rasterio.open(zone_mask) as src:
+                mask_img = src.read(1)
+                mask_img_profile = src.profile.copy()
+                mask_img_bounds = src.bounds
+
+            #prefilter mask - max binning
+            if max_binning_prefilter:
+                mask_img_filt = max_bin_filter(tif_img, mask_img, bins=set_bin_count)
+            else:
+                mask_img_filt = mask_img
+        
+            # smooth mask image and create json and array
+            dst_array, affine_res, poly_out = smooth_mask(mask_img_filt, mask_img_profile, mask_img_bounds)
+            
+            if show_plots:
+                plt.figure()
+                plt.subplot(131)
+                plt.imshow(mask_img)
+                plt.subplot(132)
+                plt.imshow(np.where(mask_img_filt.astype(bool),tif_img,np.nan))
+                plt.subplot(133)
+                plt.imshow(dst_array)
+            
+            # Write outputs image to disk            
+            outFile = zone_mask.replace('.tif','_smooth.tif')
+            src_profile.update({'transform':src_profile['affine']})
+            with rasterio.open(outFile, "w", **src_profile) as dest:
+                dest.write(dst_array,1)      
+            # Write outputs json to disk
+            outFile = zone_mask.replace('.tif','_smooth.json')            
+            with open(outFile, 'w') as dst:
+                dst.write(poly_out.to_json())
+
+
+# ----------------------------------------------------------------------------
+# Run from Command Line
 # ----------------------------------------------------------------------------
 if __name__ is '__main__':
     
@@ -264,6 +325,8 @@ if __name__ is '__main__':
                         help="perform max binning prefiltering on masks before smoothing")
     parser.add_argument('-set_bin_count', type=int,
                        help="set the number of bins in 'Max Binning Filter'")
+    parser.add_argument('-show_plots', action='store_true',
+                        help="show output plots")
     
     args = parser.parse_args(r"""
      D:\test-inputs\oleksi-issues-normal-points\src.tif
@@ -271,58 +334,16 @@ if __name__ is '__main__':
      D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z01.tif
      D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z02.tif
      D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z03.tif
-     -max_binning_prefilter -set_bin_count 3
-     """.split()
-     )
-    print(args)
+     -max_binning_prefilter -set_bin_count 3 -show_plots
+     """.split())
+    kwargs = vars(args)
+    main(**kwargs)
     
-#    zone_masks = [
-#     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z00.tif',
-#     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z01.tif',
-#     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z02.tif',
-#     'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z03.tif',
-#     ]
-#    
-#    tif_file = 'D:\\test-inputs\\oleksi-issues-normal-points\\src.tif'
-#    
-#    max_binning_prefilter = True
-#    histogram_bins = 3
 
 
 
-    
-#    #open the index image file and extract data
-#    with rasterio.open(tif_file) as src:
-#        src_profile = src.profile.copy()
-#        epsg_n, invert = bound_to_utm(src.bounds)
-#        utm_crs = crs.CRS.from_epsg(epsg_n)
-#        tif_img = src.read(1)
-#        tif_img_utm, _p = convert_img_to_utm(tif_img, src_profile, utm_crs, src.bounds)
-#    
-#    for zone_mask in zone_masks:
-#        
-#            #open the mask image file and extract data
-#            with rasterio.open(zone_mask) as src:
-#                mask_img = src.read(1)
-#                mask_img_profile = src.profile.copy()
-#                mask_img_bounds = src.bounds
-#
-#            if max_binning_prefilter:
-#                #prefilter mask - max binning
-#                mask_img = max_bin_filter(tif_img, mask_img, bins=histogram_bins)
-#        
-#            # smooth mask image and create json and array
-#            dst_array, affine_res, poly_out = smooth_mask(mask_img, mask_img_profile, mask_img_bounds)
-#            
-#            # Write outputs image to disk            
-#            outFile = zone_mask.replace('.tif','_smooth.tif')
-#            src_profile.update({'transform':src_profile['affine']})
-#            with rasterio.open(outFile, "w", **src_profile) as dest:
-#                dest.write(dst_array,1)      
-#            # Write outputs json to disk
-#            outFile = zone_mask.replace('.tif','_smooth.json')            
-#            with open(outFile, 'w') as dst:
-#                dst.write(poly_out.to_json())
+
+
 
 
     
