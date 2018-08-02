@@ -20,6 +20,7 @@ from rasterio import crs
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from rasterio import features
 import argparse
+import os
 
 # ----------------------------------------------------------------------------
 # Smooth Mask to Polygon
@@ -102,13 +103,21 @@ def convert_img_to_utm(src_array, src, dst_crs, src_bounds, i=1):
     
     profile = src
     # update the relevant parts of the profile
-    profile.update({
-        'crs': dst_crs,
-        'transform': dst_affine,
-        'affine': dst_affine,
-        'width': dst_width,
-        'height': dst_height
-    })
+    try:
+        profile.update({
+            'crs': dst_crs,
+            'transform': dst_affine,
+            'affine': dst_affine,
+            'width': dst_width,
+            'height': dst_height
+        })
+    except TypeError:
+        profile.update({
+            'crs': dst_crs,
+            'transform': dst_affine,
+            'width': dst_width,
+            'height': dst_height
+        })
     
     return dst_array, profile
 
@@ -157,12 +166,34 @@ def plot_polys(m):
         x,y = p.exterior.xy
         plt.plot(x,y)
 
+def check_crs(crs):
+    img_crs = crs['init'].split(':')[-1]
+    raise_string = '{} - invalid projection for input accepts(epsg:4326, 32600 to 32661, 32700 to 32761)'.format(img_crs)
+    try:
+        img_crs = int(img_crs)
+    except:
+        raise ValueError(raise_string)
+    if (img_crs >= 32600 and img_crs <= 32661) or (img_crs >= 32700 and img_crs <= 32761):
+        #acceptable epsg code range for UTM
+        return 'UTM'
+    elif img_crs in {4326, 4030} :
+        #acceptable epsg code for wgs84
+        return 'WGS84'
+    else:
+        raise ValueError(raise_string)
+
+
 def smooth_mask(mask_img, mask_img_profile, mask_img_bounds):
     
-    #convert input image to UTM
-    epsg_n, invert = bound_to_utm(mask_img_bounds)
-    utm_crs = crs.CRS.from_epsg(epsg_n)
-    mask_img_utm, new_profile = convert_img_to_utm(mask_img, mask_img_profile, utm_crs, mask_img_bounds)
+    #convert input image to UTM (if in WGS84)
+    if check_crs(mask_img_profile['crs']) == 'WGS84':
+        epsg_n, invert = bound_to_utm(mask_img_bounds)
+        utm_crs = crs.CRS.from_epsg(epsg_n)
+        mask_img_utm, new_profile = convert_img_to_utm(mask_img, mask_img_profile, utm_crs, mask_img_bounds)
+    else:
+        epsg_n = mask_img_profile['crs']['init'].split(':')[-1]
+        invert = (lambda (x,y): (x,y) )
+        mask_img_utm, new_profile = mask_img, mask_img_profile
 
     #rescale mask to 5m reolution image
     mask_img_utm_res, affine_res = rescale_to_gsd(mask_img_utm, new_profile['affine'], new_gsd=5)
@@ -187,19 +218,22 @@ def smooth_mask(mask_img, mask_img_profile, mask_img_bounds):
             coords = [gdf_smooth.exterior.coords,]
         
         burned = features.rasterize(shapes=poly_list, out_shape=mask_img_utm_res.shape)
-
-        # Reproject back to WGS84
-        dst_array = np.empty((mask_img_profile['height'], mask_img_profile['width']), dtype='uint8')
-        reproject(
-            # Source parameters
-            source=burned,
-            src_crs=crs.CRS.from_epsg(epsg_n),
-            src_transform=affine_res,
-            # Destination paramaters
-            destination=dst_array,
-            dst_transform=mask_img_profile['affine'],
-            dst_crs=mask_img_profile['crs'], #convert back to input CRS
-            )
+        
+        #reproject if src and dst in different crs
+        if mask_img_profile['crs']['init'] != crs.CRS.from_epsg(epsg_n)['init']:
+            
+            # Reproject back to WGS84
+            dst_array = np.empty((mask_img_profile['height'], mask_img_profile['width']), dtype='uint8')
+            reproject(
+                # Source parameters
+                source=burned,
+                src_crs=crs.CRS.from_epsg(epsg_n),
+                src_transform=affine_res,
+                # Destination paramaters
+                destination=dst_array,
+                dst_transform=mask_img_profile['affine'],
+                dst_crs=mask_img_profile['crs'], #convert back to input CRS
+                )
         
         #convert polygon coordinates, convert to dataframe
         
@@ -279,7 +313,6 @@ def main(
     #open the index image file and extract data
     with rasterio.open(index_file) as src:
         src_profile = src.profile.copy()
-        epsg_n, invert = bound_to_utm(src.bounds)
         tif_img = src.read(1)
     
     for zone_mask in zone_mask_files:
@@ -309,13 +342,14 @@ def main(
                 plt.imshow(dst_array)
             
             # Write outputs image to disk
-            ft = r'.'+zone_mask.split('.')[-1]
-            outFile = zone_mask.replace(ft, out_name_ext+ft)
+            fp, fn = os.path.split(zone_mask)
+            fnb, fne = os.path.splitext(fn)
+            outFile = os.path.join(fp, fn+out_name_ext+fne)
             src_profile.update({'transform':src_profile['affine']})
             with rasterio.open(outFile, "w", **src_profile) as dest:
                 dest.write(dst_array,1)      
             # Write outputs json to disk
-            outFile = zone_mask.replace(ft, out_name_ext+r'.json')            
+            outFile = os.path.join(fp, fn+out_name_ext+'.json')            
             with open(outFile, 'w') as dst:
                 dst.write(poly_out.to_json())
 
