@@ -146,6 +146,7 @@ def clean_poly_list(geoms):
             raise ValueError('kml file must have Polygon / MultiPolygon features only')
 
     
+    
     out=[]
     for poly in geoms:
         out.extend(process_poly(poly))
@@ -175,9 +176,16 @@ def smooth_mask(mask_img, mask_img_profile, mask_img_bounds):
     # if polygons remain, create raster image        
     if not gdf_smooth.is_empty:
         
-        #create poly
-        m = clean_poly_list(gdf_smooth)
-        poly_list = list((p,1) for p in m)
+        #if multiploygon feature was created
+        if type(gdf_smooth) != Polygon:
+            m = clean_poly_list(gdf_smooth)
+            poly_list = list((p,255) for p in m)
+            coords = [p.exterior.coords for p in gdf_smooth]
+        #if single ploygon feature was created
+        else:
+            poly_list = [(gdf_smooth,255),]
+            coords = [gdf_smooth.exterior.coords,]
+        
         burned = features.rasterize(shapes=poly_list, out_shape=mask_img_utm_res.shape)
 
         # Reproject back to WGS84
@@ -194,7 +202,7 @@ def smooth_mask(mask_img, mask_img_profile, mask_img_bounds):
             )
         
         #convert polygon coordinates, convert to dataframe
-        coords = [p.exterior.coords for p in gdf_smooth]
+        
         poly_out=[]
         for c in coords:
             pts = [(px,py)*affine_res for px,py in c]
@@ -257,15 +265,15 @@ def max_bin_filter(tif_img, mask_img, bins=3):
 # ----------------------------------------------------------------------------
 def main(
         zone_mask_files = [
-             'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z00.tif',
-             'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z01.tif',
-             'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z02.tif',
-             'D:\\test-inputs\\oleksi-issues-normal-points\\srcGSD0.0MjenksC4A0.0S0-z03.tif',
+             'D:\\test-inputs\\oleksi-issues-normal-points-2\\srcGSD0.0MjenksC4A0.0S0-z00.tif',
+             'D:\\test-inputs\\oleksi-issues-normal-points-2\\srcGSD0.0MjenksC4A0.0S0-z01.tif',
+             'D:\\test-inputs\\oleksi-issues-normal-points-2\\srcGSD0.0MjenksC4A0.0S0-z02.tif',
+             'D:\\test-inputs\\oleksi-issues-normal-points-2\\srcGSD0.0MjenksC4A0.0S0-z03.tif',
              ],
-        index_file = 'D:\\test-inputs\\oleksi-issues-normal-points\\src.tif',
+        index_file = 'D:\\test-inputs\\oleksi-issues-normal-points-2\\src.tif',
         max_binning_prefilter = True,
         set_bin_count = 3,
-        show_plots = False,
+        show_plots = True,
         out_name_ext = r'_smooth',
         ):    
     #open the index image file and extract data
@@ -332,11 +340,11 @@ if __name__ is '__main__':
     
     #for debug
     args = parser.parse_args(r"""
-     D:\test-inputs\oleksi-issues-normal-points\src.tif
-     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z00.tif
-     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z01.tif
-     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z02.tif
-     D:\test-inputs\oleksi-issues-normal-points\srcGSD0.0MjenksC4A0.0S0-z03.tif
+     D:\test-inputs\oleksi-issues-normal-points-2\src.tif
+     D:\test-inputs\oleksi-issues-normal-points-2\srcGSD0.0MjenksC4A0.0S0-z00.tif
+     D:\test-inputs\oleksi-issues-normal-points-2\srcGSD0.0MjenksC4A0.0S0-z01.tif
+     D:\test-inputs\oleksi-issues-normal-points-2\srcGSD0.0MjenksC4A0.0S0-z02.tif
+     D:\test-inputs\oleksi-issues-normal-points-2\srcGSD0.0MjenksC4A0.0S0-z03.tif
      -max_binning_prefilter -set_bin_count 3 -show_plots
      """.split())
     
